@@ -4,6 +4,8 @@ __pycache__
 exampleScraper.py
 wiki.py
 /venv
+.venv
+.python-version
 persist.sqlite
 persist_copy.sqlite
 .DS_Store

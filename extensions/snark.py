@@ -1,6 +1,7 @@
 import os, re, datetime, hashlib
 import hikari, lightbulb
 import google.generativeai as genai
+from google.generativeai import GenerationConfig
 import db
 
 plugin = lightbulb.Plugin("Snark")
@@ -14,12 +15,12 @@ eight_ball_responses = [ "It is certain.", "It is decidedly so.", "Without a dou
 genai.configure(api_key=os.environ["GEMINI_API_KEY"])
 
 # Set up the model
-generation_config = {
-    "temperature": 1,
-    "top_p": 1,
-    "top_k": 1,
-    "max_output_tokens": 2000,
-}
+generation_config = GenerationConfig(
+    temperature=1,
+    top_p=1,
+    top_k=1,
+    max_output_tokens=2000,
+)
 
 safety_settings = [
     {
@@ -45,6 +46,13 @@ model = genai.GenerativeModel(model_name="gemini-pro",
                               safety_settings=safety_settings)
 
 DEFAULT_PROMPT = "You are the Savage Kitti Bot on Computer Science @ UniMelb Discord. Respond Appropriately. Kitti has a God Complex and doesn't hold back. You are gen z and reply succinct.\nQ: {}"
+
+async def has_kitti_role(member: hikari.Member) -> bool:
+    current_roles = (await member.fetch_roles())[1:]
+    for role in current_roles:
+        if role.id == int(os.environ['BOT_ADMIN_ROLE']):
+            return True
+    return False
 
 def choose_eightball_response(message):
     # Add current date down to hour precision to vary the response periodically
@@ -97,14 +105,69 @@ def llm_response(event) -> str:
 )
 @lightbulb.implements(lightbulb.SlashCommand)
 async def setprompt(ctx: lightbulb.Context) -> None:
-    current_roles = (await ctx.member.fetch_roles())[1:]
-    for role in current_roles:
-        if role.id == int(os.environ['BOT_ADMIN_ROLE']):
-            prompt = ctx.options.prompt
-            db.set_option('LLM_PROMPT', prompt)
-            print('Prompt is now: ' + prompt)
-            await ctx.respond("OK")
-            return
+    if ctx.member is not None and has_kitti_role(ctx.member):
+        prompt = ctx.options.prompt
+        db.set_option('LLM_PROMPT', prompt)
+        print('Prompt is now: ' + prompt)
+        await ctx.respond("OK")
+        return
+    await ctx.respond("Not an admin")
+
+@plugin.command
+@lightbulb.option(
+    "prompt",
+    "Prompt to test. {} is replaced with input.",
+    type=str,
+    required=False
+)
+@lightbulb.option(
+    "input",
+    "Input to test prompt with",
+    type=str,
+    required=False
+)
+@lightbulb.command(
+    "testprompt",
+    "Test LLM prompt"
+)
+@lightbulb.implements(lightbulb.SlashCommand)
+async def testprompt(ctx: lightbulb.Context) -> None:
+    prompt = ctx.options.prompt
+    message_content = ctx.options.input
+
+    if not prompt or not message_content:
+        await ctx.respond('Was I supposed to read your mind?')
+        return
+    
+    response = model.generate_content([prompt.replace('{}', message_content)])
+    
+    if len(response.candidates) == 0:
+        await ctx.respond('No.')
+        return
+    if response.candidates[0].finish_reason != 1:
+        await ctx.respond('No.')
+        return
+    await ctx.respond(response.text.replace('@everyone', 'everyone').replace('@here', 'here'))
+
+@testprompt.set_error_handler
+async def testprompt_error(event: lightbulb.CommandErrorEvent) -> bool:
+    exception = event.exception.__cause__ or event.exception
+
+    await event.context.respond(f"Error: {exception}")
+    return True
+
+@plugin.command
+@lightbulb.command(
+    "getprompt",
+    "Get LLM prompt"
+)
+@lightbulb.implements(lightbulb.SlashCommand)
+async def getprompt(ctx: lightbulb.Context) -> None:
+    if ctx.member is not None and has_kitti_role(ctx.member):
+        prompt = db.get_option('LLM_PROMPT', DEFAULT_PROMPT)
+        await ctx.respond("zzz... I'll slide into your DMs")
+        await ctx.member.send(f"I reveal my programming:\n {prompt}")
+        return
     await ctx.respond("Not an admin")
 
 @plugin.listener(hikari.GuildMessageCreateEvent)
